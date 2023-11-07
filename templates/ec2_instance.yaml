@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ---
+Parameters:
+  customerName:
+    Type: String
+    Description: Customer name tag for AWS Resources
+    Default: FakeCustomer01
+  environment:
+    Type: String
+    Description: Environment tag for AWS Resources
+    Default: sandbox
+  createdBy:
+    Type: String
+    Default: SAE_Team
+  iacMethod:
+    Type: String
+    Description: IAC tool used to create resources
+    Default: cfn
+  snsSubscriptionEmailAddress:
+    Type: String
+    Description: Which email address to use for SNS Subscription notifications?
+    Default: "mike.sciortino@atayogroup.com"
+  ec2KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Select which keypair to use
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Select at least one subnet in your selected VPC.
+  VpcId:
+    Type: List<AWS::EC2::VPC::Id>
+    Description: Select one VPC.
+
+Resources:
+  ec2IAMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: ec2IAMInstanceProfile
+      Path: "/"
+      Roles:
+        - !Ref ec2IAMRole
+  ec2IAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Description: IAM Role for EC2 instances to install DRS agent
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMPatchAssociation
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/service-role/AWSElasticDisasterRecoveryEc2InstancePolicy
+        - arn:aws:iam::aws:policy/AWSElasticDisasterRecoveryAgentInstallationPolicy
+      RoleName: ec2-drs-agent-role
+  asgLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: asgLaunchTemplate
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt
+            - ec2IAMInstanceProfile
+            - Arn
+        DisableApiTermination: true
+        ImageId: ami-0dbc3d7bc646e8516
+        InstanceType: t3.small
+        KeyName: !Ref ec2KeyPair
+        SecurityGroupIds:
+          - !Ref InstanceSecurityGroup
+
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
+            export AWS_REGION=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/placement/region/")
+            export EC2_IAM_ROLE=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/iam/security-credentials/")
+            curl -H "X-aws-ec2-metadata-token: $TOKEN" -v -o ~/.creds.json http://169.254.169.254/latest/meta-data/iam/security-credentials/$EC2_IAM_ROLE/
+            export AWS_ACCESS_KEY_ID=$(cat ~/.creds.json | jq -r '.AccessKeyId')
+            export AWS_SECRET_ACCESS_KEY=$(cat ~/.creds.json | jq -r '.SecretAccessKey')
+            export AWS_SECURITY_TOKEN=$(cat ~/.creds.json | jq -r '.Token')
+            wget -O ./aws-replication-installer-init https://aws-elastic-disaster-recovery-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/aws-replication-installer-init 
+            chmod +x aws-replication-installer-init
+            ./aws-replication-installer-init --region $AWS_REGION --aws-access-key-id $AWS_ACCESS_KEY_ID --aws-secret-access-key $AWS_SECRET_ACCESS_KEY --aws-session-token $AWS_SECURITY_TOKEN --tags customerName=${customerName} createdBy=${createdBy} environment=${environment} iacMethod=${iacMethod} --no-prompt
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: ec2_instance
+              - Key: DRS
+                Value: enabled
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub "${customerName}-${environment}-ec2"
+              - Key: DRS
+                Value: enabled
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      VpcId: !Select [0, !Split [",", !Join [",", !Ref VpcId]]]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 192.0.2.0/24
+
+  ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      SecurityGroupIds:
+        - Ref: "InstanceSecurityGroup"
+      SubnetId: !Select [0, !Split [",", !Join [",", !Ref SubnetIds]]]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref asgLaunchTemplate
+        Version: !GetAtt asgLaunchTemplate.LatestVersionNumber

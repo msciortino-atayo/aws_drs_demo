@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ---
+Parameters:
+  customerName:
+    Type: String
+    Description: Customer name tag for AWS Resources
+    Default: FakeCustomer01
+  environment:
+    Type: String
+    Description: Environment tag for AWS Resources
+    Default: sandbox
+  createdBy:
+    Type: String
+    Default: SAE_Team
+  iacMethod:
+    Type: String
+    Description: IAC tool used to create resources
+    Default: cfn
+  snsSubscriptionEmailAddress:
+    Type: String
+    Description: Which email address to use for SNS Subscription notifications?
+    Default: "mike.sciortino@atayogroup.com"
+
+Resources:
+  drsSourceServerAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: DRS Source Server Alarm
+      AlarmName: !Sub "${customerName} - ${environment} - DRS Source Server Lag Duration"
+      AlarmActions:
+        - !Ref drsSourceServerSNSTopic
+      Dimensions:
+        - Name: InstanceId
+          Value:
+            Ref: ec2Instance
+      MetricName: LagDuration
+      Namespace: AWS/DRS
+      Statistic: Average
+      Period: "300"
+      EvaluationPeriods: "1"
+      Threshold: "30"
+      ComparisonOperator: GreaterThanThreshold
+
+  drsSourceServerSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Ref snsSubscriptionEmailAddress
+          Protocol: email
