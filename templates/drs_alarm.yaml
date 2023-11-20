@@ -16,10 +16,9 @@ Parameters:
     Type: String
     Description: IAC tool used to create resources
     Default: cfn
-  snsSubscriptionEmailAddress:
+  sourceServerId:
     Type: String
-    Description: Which email address to use for SNS Subscription notifications?
-    Default: "mike.sciortino@atayogroup.com"
+    Description: DRS Source Server ID
 
 Resources:
   drsSourceServerAlarm:
@@ -27,12 +26,11 @@ Resources:
     Properties:
       AlarmDescription: DRS Source Server Alarm
       AlarmName: !Sub "${customerName} - ${environment} - DRS Source Server Lag Duration"
-      AlarmActions:
-        - !Ref drsSourceServerSNSTopic
+
       Dimensions:
-        - Name: InstanceId
+        - Name: SourceServerID
           Value:
-            Ref: ec2Instance
+            Ref: sourceServerId
       MetricName: LagDuration
       Namespace: AWS/DRS
       Statistic: Average
@@ -40,10 +38,3 @@ Resources:
       EvaluationPeriods: "1"
       Threshold: "30"
       ComparisonOperator: GreaterThanThreshold
-
-  drsSourceServerSNSTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      Subscription:
-        - Endpoint: !Ref snsSubscriptionEmailAddress
-          Protocol: email

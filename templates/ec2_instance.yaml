@@ -5,7 +5,7 @@ Parameters:
     Type: String
     Description: Customer name tag for AWS Resources
     Default: FakeCustomer01
-  environment:
+  customerEnvironment:
     Type: String
     Description: Environment tag for AWS Resources
     Default: sandbox
@@ -16,10 +16,6 @@ Parameters:
     Type: String
     Description: IAC tool used to create resources
     Default: cfn
-  snsSubscriptionEmailAddress:
-    Type: String
-    Description: Which email address to use for SNS Subscription notifications?
-    Default: "mike.sciortino@atayogroup.com"
   ec2KeyPair:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Select which keypair to use
@@ -85,7 +81,7 @@ Resources:
             export AWS_SECURITY_TOKEN=$(cat ~/.creds.json | jq -r '.Token')
             wget -O ./aws-replication-installer-init https://aws-elastic-disaster-recovery-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/aws-replication-installer-init 
             chmod +x aws-replication-installer-init
-            ./aws-replication-installer-init --region $AWS_REGION --aws-access-key-id $AWS_ACCESS_KEY_ID --aws-secret-access-key $AWS_SECRET_ACCESS_KEY --aws-session-token $AWS_SECURITY_TOKEN --tags customerName=${customerName} createdBy=${createdBy} environment=${environment} iacMethod=${iacMethod} --no-prompt
+            ./aws-replication-installer-init --region $AWS_REGION --aws-access-key-id $AWS_ACCESS_KEY_ID --aws-secret-access-key $AWS_SECRET_ACCESS_KEY --aws-session-token $AWS_SECURITY_TOKEN --tags customerName=${customerName} createdBy=${createdBy} customerEnvironment=${customerEnvironment} iacMethod=${iacMethod} --no-prompt
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -96,9 +92,10 @@ Resources:
           - ResourceType: volume
             Tags:
               - Key: Name
-                Value: !Sub "${customerName}-${environment}-ec2"
+                Value: !Sub "${customerName}-${customerEnvironment}-ec2"
               - Key: DRS
                 Value: enabled
+
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -119,3 +116,12 @@ Resources:
       LaunchTemplate:
         LaunchTemplateId: !Ref asgLaunchTemplate
         Version: !GetAtt asgLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: customerName
+          Value: !Ref customerName
+        - Key: customerEnvironment
+          Value: !Ref customerEnvironment
+        - Key: createdBy
+          Value: !Ref createdBy
+        - Key: iacMethod
+          Value: !Ref iacMethod

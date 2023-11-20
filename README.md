@@ -12,6 +12,7 @@
   - [Configure AWS Elastic Disaster Recovery Service default settings](#configure-aws-elastic-disaster-recovery-service-default-settings)
     - [Default Replication](#default-replication)
     - [Default launch](#default-launch)
+  - [Event Bridge Solution Overview](#event-bridge-solution-overview)
 
 ## Architecture Diagram
 ![](/diagrams/AWS%20Elastic%20Disaster%20Recovery%20Demo%20Architecture.png)
@@ -76,3 +77,6 @@
 5. Modify other settings as needed.
 6. Click "Save"
 
+## Event Bridge Solution Overview
+
+* Can be used within customer environments to deploy CloudWatch alarms automatically for each source server that is registered to the DRS service using Amazon Event Bridge and a Lambda function

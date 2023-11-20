@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ---
+Parameters:
+  snsSubscriptionEmailAddress:
+    Type: String
+    Description: Which email address to use for SNS Subscription notifications?
+    Default: "mike.sciortino@atayogroup.com"
+  customerName:
+    Type: String
+    Description: Customer name tag for AWS Resources
+    Default: FakeCustomer01
+  environment:
+    Type: String
+    Description: Environment tag for AWS Resources
+    Default: sandbox
+  lagDurationThreshold:
+    Type: Number
+    Default: 30
+    Description: Please enter the LagDuration threshold for the Cloudwatch Metric Alarm
+Resources:
+  drsEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${customerName}-${environment}-rule"
+      EventPattern:
+        source:
+          - aws.drs
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource:
+            - drs.amazonaws.com
+          eventName:
+            - CreateSourceServerForDrs
+
+  drsEventBridgeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt drsLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt drsEventRule.Arn
+
+  drsLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${customerName}-${environment}-drs-lambda"
+      Role: !GetAtt drsLambdaIAMRole.Arn
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Environment:
+        Variables:
+          lagDurationThreshold: !Ref lagDurationThreshold
+          snsTopicARN: !Ref drsSourceServerSNSTopic
+
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          cw = boto3.client('cloudwatch')
+          ec2 = boto3.client('ec2')
+
+          def lambda_handler(event, context):
+            print("testing lambda function")
+            
+            ec2_instance_id = event["requestParameters"]["sourceServerIdInfo"]["metadataInstanceID"]
+            source_server_id = event["responseElements"]["sourceServerID"]
+            
+            print(ec2_instance_id)
+            
+            response = ec2.describe_tags(
+                Filters=[
+                    {
+                        'Name': 'resource-id',
+                        'Values': [
+                            ec2_instance_id,
+                        ],
+                    },
+                ],
+            )
+            print("getting ec2 instance customer tags")
+            tag_dict = {}
+            
+            for tag in (tag for tag in response['Tags'] if not tag["Key"].startswith('aws:')):
+                tag_dict[tag["Key"]] = tag["Value"]
+            
+            print(tag_dict)
+            alarm_name = f"{tag_dict['customerName']}-{tag_dict['customerEnvironment']}-{ec2_instance_id}-drs-alarm"
+
+            response = cw.put_metric_alarm(
+                AlarmName=alarm_name,
+                AlarmDescription=f"{tag_dict['customerName']} - {tag_dict['customerEnvironment']} - {ec2_instance_id}: LagDuration metric exceeded.",
+                MetricName='LagDuration',
+                Namespace='AWS/DRS',
+                Statistic='Average',
+                ActionsEnabled=True,
+                AlarmActions=[
+                  os.environ.get('snsTopicARN')
+                ],
+                Dimensions=[
+                    {
+                        'Name': 'SourceServerID',
+                        'Value': source_server_id
+                    },
+                ],
+                Period=300,
+                EvaluationPeriods=1,
+                Threshold=float(os.environ.get('lagDurationThreshold')),
+                ComparisonOperator='GreaterThanThreshold',
+                TreatMissingData='breaching'
+            )
+
+            print(response)
+  drsLambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${customerName}-${environment}-drs-iam_role"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${customerName}-${environment}-drs-iam_policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "cloudformation:CreateStack"
+                  - "ec2:DescribeInstances"
+                  - "ec2:DescribeTags"
+                  - "cloudwatch:PutMetricAlarm"
+                Resource:
+                  - "*"
+
+  drsSourceServerSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${customerName}-${environment}-drs-sns"
+      Subscription:
+        - Endpoint: !Ref snsSubscriptionEmailAddress
+          Protocol: email
+
+Outputs:
+  drsSNSTopicArn:
+    Description: "DRS SNS Topic ARN"
+    Value: !Ref drsSourceServerSNSTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-drsSNSTopicArn"
